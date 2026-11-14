@@ -1,0 +1,1258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Cypress Bayou Trail</title>
+<script>
+/* Touch mode comes from the device's own touch capability, decided before
+   first paint. Viewport width and pointer media queries alone can both say
+   "desktop" on a real phone (landscape, wide layout viewport, desktop-site
+   mode, in-app webview), which is how earlier builds wrongly hid the
+   touch controls. On touch devices the keyboard instruction elements are removed
+   from the DOM entirely, so nothing keyboard-shaped can ever show. */
+(function () {
+  function enableTouch() {
+    document.documentElement.classList.add('is-touch');
+    var nodes = document.querySelectorAll('.kb-text');
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].parentNode) nodes[i].parentNode.removeChild(nodes[i]);
+    }
+  }
+  var touchCapable = false;
+  try {
+    touchCapable = ('ontouchstart' in window) ||
+      (navigator.maxTouchPoints > 0) ||
+      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  } catch (e) {}
+  if (touchCapable) document.documentElement.classList.add('is-touch');
+  document.addEventListener('DOMContentLoaded', function () {
+    if (document.documentElement.classList.contains('is-touch')) enableTouch();
+  });
+  /* If capability reporting lied, the first real touch fixes it on the spot. */
+  window.addEventListener('touchstart', enableTouch, { passive: true });
+  window.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'touch') enableTouch();
+  }, { passive: true });
+})();
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+<style>
+  :root{
+    --bg:#e9efe0; --panel:#ffffff; --panel2:#f3efe0; --ink:#1c2b1e; --muted:#55654f;
+    --line:#cbd8bd; --accent:#2f6b3a; --accent2:#a86a12;
+    --shadow:0 10px 30px rgba(22,42,24,.16);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#11170f; --panel:#1d261b; --panel2:#252e20; --ink:#edf3e4; --muted:#a9b8a0; --line:#394733; --accent:#8bc98a; --accent2:#e6b95a; --shadow:0 10px 30px rgba(0,0,0,.45); }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; line-height:1.5; }
+  button{ min-height:44px; min-width:44px; }
+  .wrap{ max-width:980px; margin:0 auto; padding:18px 14px 28px; }
+  .intro{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; justify-content:space-between; margin-bottom:12px; }
+  .intro h1{ font-family:Georgia,serif; font-size:clamp(26px,4vw,38px); line-height:1.05; margin:0; letter-spacing:-.02em; }
+  .intro p{ margin:6px 0 0; color:var(--muted); max-width:640px; }
+  .badge{ display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:13px; font-weight:700; }
+
+  /* Game shell and container: deliberately simple sizing. In the normal page
+     the container gets its height from its own aspect-ratio (no percentage
+     height chain). In fullscreen the browser sizes the shell itself to the
+     screen, and the container is absolutely stretched to fill it. Either
+     way the box Phaser measures is explicit and non-zero. */
+  .game-shell{ position:relative; display:flex; flex-direction:column; background:#24351f; border-radius:18px; padding:8px; box-shadow:var(--shadow); overflow:hidden; }
+  #game-container{ position:relative; width:100%; aspect-ratio:800/560; background:#203d2a; border-radius:10px; overflow:hidden; flex:0 0 auto; min-height:0; }
+  #game-container canvas{ display:block; }
+  .game-shell:fullscreen{ width:100%; height:100%; border-radius:0; padding:8px; box-shadow:none; background:#24351f; }
+  .game-shell:-webkit-full-screen{ width:100%; height:100%; border-radius:0; padding:8px; box-shadow:none; background:#24351f; }
+  .game-shell:fullscreen #game-container,
+  .game-shell:-webkit-full-screen #game-container{ position:relative; inset:auto; width:100%; height:auto; aspect-ratio:auto; border-radius:10px; flex:1 1 auto; min-height:0; }
+
+  /* Touch: compact chrome above the shell, and the shell (screen + deck)
+     fills essentially the whole viewport height. The canvas container
+     flexes to take everything the deck does not need. */
+  html.is-touch .wrap{ padding:10px 10px 20px; }
+  html.is-touch .intro{ margin-bottom:8px; align-items:center; }
+  html.is-touch .intro h1{ font-size:24px; }
+  html.is-touch .intro p{ display:none; }
+  html.is-touch .badge{ display:none; }
+  html.is-touch .game-shell{ height:calc(100dvh - 62px); min-height:min(480px, calc(100dvh - 62px)); }
+  html.is-touch #game-container{ aspect-ratio:auto; flex:1 1 auto; min-height:0; height:auto; }
+  html.is-touch .game-shell:fullscreen,
+  html.is-touch .game-shell:-webkit-full-screen{ height:100%; min-height:0; }
+
+  /* Game Boy style control deck: in normal page flow directly below the
+     game screen, inside the shell. Shown only on touch devices. */
+  .gb-deck{ display:none; }
+  html.is-touch .gb-deck{ display:flex; flex:0 0 auto; align-items:center; justify-content:space-between; gap:16px; margin-top:8px; background:linear-gradient(180deg,#dcd7c6,#c9c3ae); border-radius:14px; padding:14px 18px 12px; box-shadow:inset 0 1px 0 rgba(255,255,255,.75), inset 0 -2px 6px rgba(0,0,0,.14); color:#2b2b26; }
+  .gb-dpad{ display:grid; grid-template-columns:44px 44px 44px; grid-template-rows:44px 44px 44px; width:132px; height:132px; flex:0 0 132px; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; filter:drop-shadow(0 3px 3px rgba(0,0,0,.35)); }
+  .gb-dpad-btn{ appearance:none; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; margin:0; background:#262626; border:1px solid #101010; color:#6a6a6a; font-size:15px; line-height:1; display:flex; align-items:center; justify-content:center; touch-action:none; user-select:none; -webkit-user-select:none; cursor:pointer; }
+  .gb-dpad-btn.is-held{ background:#050505; color:#a8a8a8; }
+  .gb-dpad-up{ grid-column:2; grid-row:1; border-radius:7px 7px 0 0; border-bottom:none; }
+  .gb-dpad-left{ grid-column:1; grid-row:2; border-radius:7px 0 0 7px; border-right:none; }
+  .gb-dpad-center{ grid-column:2; grid-row:2; background:#262626; border:1px solid #101010; display:flex; align-items:center; justify-content:center; }
+  .gb-dpad-center::after{ content:""; width:16px; height:16px; border-radius:50%; background:#1a1a1a; box-shadow:inset 0 1px 3px rgba(0,0,0,.8), 0 1px 0 rgba(255,255,255,.12); }
+  .gb-dpad-right{ grid-column:3; grid-row:2; border-radius:0 7px 7px 0; border-left:none; }
+  .gb-dpad-down{ grid-column:2; grid-row:3; border-radius:0 0 7px 7px; border-top:none; }
+  .gb-mid{ flex:1 1 auto; display:flex; flex-direction:column; align-items:center; gap:8px; min-width:0; }
+  .gb-speaker{ display:flex; gap:5px; transform:rotate(-18deg); opacity:.45; }
+  .gb-speaker i{ display:block; width:4px; height:26px; border-radius:999px; background:#6f6a58; }
+  .gb-ab{ flex:0 0 auto; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent; }
+  .gb-ab-row{ display:flex; gap:14px; align-items:flex-start; transform:rotate(-14deg); }
+  .gb-btn-wrap{ display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .gb-b-wrap{ margin-top:20px; }
+  .gb-a-wrap{ margin-top:0; }
+  .gb-btn{ appearance:none; width:56px; height:56px; min-width:56px; min-height:56px; padding:0; border-radius:50%; background:radial-gradient(circle at 35% 28%, #b04a5a, #7e2130 58%, #5c1621 100%); border:1px solid #47101a; color:#fff; font-weight:800; font-size:19px; box-shadow:0 4px 0 #47101a, 0 7px 12px rgba(0,0,0,.32), inset 0 1px 2px rgba(255,255,255,.35); touch-action:none; user-select:none; -webkit-user-select:none; cursor:pointer; }
+  .gb-btn:active{ transform:translateY(2px); box-shadow:0 2px 0 #47101a, 0 4px 8px rgba(0,0,0,.3), inset 0 1px 2px rgba(255,255,255,.3); }
+  .gb-btn-label{ font-size:11px; font-weight:800; letter-spacing:.1em; color:#3c3a31; text-transform:uppercase; white-space:nowrap; }
+  @media (max-width:380px){ .gb-mid{ display:none; } .gb-deck{ padding-left:12px; padding-right:12px; } }
+
+  /* Restart button: sits next to Full at the top right of the game view.
+     Plain page reload is the restart: it is the most reliable reset there
+     is, with no scene state to untangle. */
+  .restart-btn{ position:absolute; top:14px; right:118px; z-index:20; display:inline-flex; align-items:center; gap:7px; min-height:44px; min-width:44px; padding:0 14px; border-radius:999px; border:1px solid rgba(255,255,255,.5); background:rgba(16,28,14,.74); color:#fff; font-weight:800; font-size:14px; cursor:pointer; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .restart-btn:active{ background:rgba(47,107,58,.92); }
+
+  /* Full screen button: top right of the game view. */
+  .fullscreen-btn{ position:absolute; top:14px; right:14px; z-index:20; display:inline-flex; align-items:center; gap:7px; min-height:44px; min-width:44px; padding:0 14px; border-radius:999px; border:1px solid rgba(255,255,255,.5); background:rgba(16,28,14,.74); color:#fff; font-weight:800; font-size:14px; cursor:pointer; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .fullscreen-btn:active{ background:rgba(47,107,58,.92); }
+  .fullscreen-btn .fs-icon{ display:inline-flex; align-items:center; line-height:0; }
+  .fullscreen-btn .fs-icon-collapse{ display:none; }
+  .fullscreen-btn.is-active .fs-icon-expand{ display:none; }
+  .fullscreen-btn.is-active .fs-icon-collapse{ display:inline-flex; }
+
+  /* Instructions follow the controls actually in use. */
+  .touch-text{ display:none; }
+  html.is-touch .touch-text{ display:inline; }
+  .touch-li{ display:none; }
+  html.is-touch .touch-li{ display:list-item; }
+
+  #win-banner{ display:none; margin-top:12px; background:#fff3bf; color:#4a3500; border:1px solid #d9b73b; border-radius:12px; padding:14px 16px; }
+  @media (prefers-color-scheme: dark){ #win-banner{ background:#3a3312; color:#ffe98a; border-color:#8a7420; } }
+  #win-banner.show{ display:block; }
+  #win-banner strong{ font-size:18px; }
+  .grid{ display:grid; grid-template-columns:1.05fr .95fr; gap:14px; margin-top:14px; }
+  @media (max-width:700px){ .grid{ grid-template-columns:1fr; } }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px; }
+  .card h2{ font-family:Georgia,serif; margin:0 0 8px; font-size:20px; }
+  .card ul, .card ol{ margin:6px 0 0; padding-left:20px; }
+  .card li{ margin:5px 0; }
+  .card li.done{ color:var(--accent); font-weight:700; }
+  kbd{ background:var(--panel2); border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 6px; font-size:13px; font-weight:700; }
+  .quest-status{ font-weight:800; color:var(--accent); }
+  .pill{ display:inline-block; border-radius:999px; padding:3px 9px; background:var(--panel2); border:1px solid var(--line); font-size:13px; font-weight:700; margin:2px 2px 2px 0; }
+  .small{ color:var(--muted); font-size:14px; }
+  .features{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .warn{ border-left:4px solid var(--accent2); padding:8px 10px; background:var(--panel2); border-radius:6px; margin-top:10px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="intro">
+    <div>
+      <h1>Cypress Bayou Trail</h1>
+      <p>A deep South boardwalk maze over the swamp. The corn snake hides in a clearing in a far corner, and only one winding route reaches it. Right before the viewing deck you cross a bridge over open water, and the snake itself is sprawled sunbathing on a big cypress branch above the deck. Watch for a gator and cottonmouths, find the snake, then follow the orange ribbons back to the car.</p>
+    </div>
+    <span class="badge">A big maze adventure</span>
+  </div>
+
+  <div class="game-shell" id="game-shell">
+    <div id="game-container" aria-label="Cypress Bayou Trail game"></div>
+    <button class="restart-btn" id="restart-btn" type="button" title="Restart the game" aria-label="Restart the game">
+      <span aria-hidden="true"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></span>
+      <span>Restart</span>
+    </button>
+    <button class="fullscreen-btn" id="fullscreen-btn" type="button" title="Full screen" aria-label="Enter full screen" aria-pressed="false">
+      <span class="fs-icon fs-icon-expand" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></span>
+      <span class="fs-icon fs-icon-collapse" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg></span>
+      <span class="fs-label">Full</span>
+    </button>
+    <div class="gb-deck" id="gb-deck" aria-label="Game controls">
+      <div class="gb-dpad" role="group" aria-label="Direction pad">
+        <button class="gb-dpad-btn gb-dpad-up" type="button" data-dir="up" aria-label="Walk up">▲</button>
+        <button class="gb-dpad-btn gb-dpad-left" type="button" data-dir="left" aria-label="Walk left">◀</button>
+        <div class="gb-dpad-center" aria-hidden="true"></div>
+        <button class="gb-dpad-btn gb-dpad-right" type="button" data-dir="right" aria-label="Walk right">▶</button>
+        <button class="gb-dpad-btn gb-dpad-down" type="button" data-dir="down" aria-label="Walk down">▼</button>
+      </div>
+      <div class="gb-mid" aria-hidden="true">
+        <div class="gb-speaker"><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="gb-ab">
+        <div class="gb-ab-row">
+          <div class="gb-btn-wrap gb-b-wrap">
+            <button class="gb-btn" id="btn-b" type="button" aria-label="B button, talk and read">B</button>
+            <span class="gb-btn-label">B</span>
+          </div>
+          <div class="gb-btn-wrap gb-a-wrap">
+            <button class="gb-btn" id="btn-a" type="button" aria-label="A button, talk and read">A</button>
+            <span class="gb-btn-label">A · Talk</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="win-banner" role="status">
+    <strong>🎉 You made it back to the car safely!</strong><br>
+    You solved the boardwalk maze, found the corn snake in its hidden clearing, followed the orange ribbons home, and made it in one piece. Great spotting, Eli!
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>How to play</h2>
+      <ul>
+        <li>You play as <strong>Little Eli</strong>, starting by the car in the gravel parking area at the south end.</li>
+        <li><span class="kb-text"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> or <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> to walk.</span><span class="touch-text">Use the <strong>D pad</strong> under the screen to walk. Hold two directions at once to walk diagonally.</span></li>
+        <li><span class="kb-text"><kbd>E</kbd> or <kbd>Space</kbd></span><span class="touch-text">Tap the <strong>A</strong> button (or <strong>B</strong>)</span> to talk, read signs, look at the corn snake, and get in the car at the end.</li>
+        <li class="touch-li">Tap the <strong>Full</strong> button at the top right of the game for the big view.</li>
+        <li>Tap <strong>Restart</strong> at the top right of the game any time to start over from the car.</li>
+        <li>Stay on the boardwalk. The swamp water is blocked off. The maze has junctions, loops, and dead ends, and each dead end has a little sign worth reading. Only one route reaches the hidden clearing.</li>
+        <li>All the animals are real sprite sheets: the alligator swims, the cottonmouths slither, the squirrel runs, and the corn snake lies stretched out sunbathing on a cypress branch over the viewing deck.</li>
+        <li>The last stretch before the deck is a bridge over a wider channel of open swamp water, lighter crosswise planks with rails on both sides. It is the only way onto the deck.</li>
+      </ul>
+      <div class="warn"><strong>Watch and wait:</strong> one big alligator periodically lunges across a boardwalk section on the main route, and three dark cottonmouths slither back and forth across the planks in different corridors. They are easy to see. Wait for a clear gap, then walk through. Touching one costs 1 heart and sends you back to your last safe checkpoint.</div>
+      <p class="small" style="margin-top:10px">Checkpoints: the trailhead on the way out, a rest platform about midway through the maze, and the hidden clearing on the way back. If all 3 hearts run out, you restart by the car with hearts refilled and your corn snake sighting kept.</p>
+    </section>
+
+    <section class="card">
+      <h2>Quest log</h2>
+      <p style="margin:0">Now: <span class="quest-status" id="dom-quest">Explore the maze and find the corn snake</span></p>
+      <ol>
+        <li id="step-1">Explore the maze and find the hidden clearing</li>
+        <li id="step-2">See the corn snake</li>
+        <li id="step-3">Follow the orange ribbons back to the car safely</li>
+      </ol>
+      <p style="margin:10px 0 0">Hearts: <span id="dom-items">♥♥♥ (3)</span></p>
+      <p style="margin:6px 0 0">Location: <span id="dom-place">Gravel parking area</span></p>
+      <h2 style="margin-top:16px">On the trail</h2>
+      <div class="features">
+        <span class="pill">🐊 1 alligator (timed lunge)</span><span class="pill">🐍 3 cottonmouths</span>
+        <span class="pill">🧡 1 friendly corn snake</span><span class="pill">🐿️ 1 very fast squirrel</span>
+        <span class="pill">🗺️ Big boardwalk maze</span><span class="pill">🌉 Bridge to the deck</span><span class="pill">🎀 Ribbon trail home</span>
+        <span class="pill">Cypress + Spanish moss</span><span class="pill">Boardwalk with rails</span>
+      </div>
+    </section>
+  </div>
+
+  <p class="small" style="margin-top:14px">Built with Phaser 3. Eli and every animal use real sprite sheet files: assets/little-eli-spritesheet.png, assets/alligator-spritesheet.png, assets/cottonmouth-spritesheet.png, assets/corn-snake-spritesheet.png, and assets/squirrel-spritesheet.png. The big cypress at the viewing deck is a real sprite image too: assets/cypress-tree.png. The rest of the bayou scenery and the car are drawn in code with Phaser Graphics.</p>
+</main>
+
+<script>
+/* ================= Page controls (plain DOM, no Phaser) ================= */
+window.touchInput = { up: false, down: false, left: false, right: false };
+window.interactQueued = false;
+
+/* --- Game Boy D pad ---
+   Each direction is its own button and tracks only its own pointer
+   (pointer capture on that button), so a player can hold a direction
+   with one thumb and press A with the other at the same time. Press and
+   hold sets the matching movement boolean, release clears it. Holding
+   two adjacent directions at once gives a diagonal, exactly like
+   holding two arrow keys. */
+(function () {
+  var btns = document.querySelectorAll('.gb-dpad-btn[data-dir]');
+  for (var i = 0; i < btns.length; i++) {
+    (function (btn) {
+      var dir = btn.getAttribute('data-dir');
+      var pointerId = null;
+      function press(e) {
+        e.preventDefault();
+        if (pointerId !== null) return;
+        pointerId = e.pointerId;
+        try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+        window.touchInput[dir] = true;
+        btn.classList.add('is-held');
+      }
+      function release(e) {
+        if (pointerId === null) return;
+        if (e && typeof e.pointerId !== 'undefined' && e.pointerId !== pointerId) return;
+        pointerId = null;
+        window.touchInput[dir] = false;
+        btn.classList.remove('is-held');
+      }
+      btn.addEventListener('pointerdown', press);
+      btn.addEventListener('pointerup', function (e) { e.preventDefault(); release(e); });
+      btn.addEventListener('pointercancel', release);
+      btn.addEventListener('lostpointercapture', function () { release(null); });
+      btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    })(btns[i]);
+  }
+})();
+
+/* --- A and B buttons: both are interact, same as the E key --- */
+['btn-a', 'btn-b'].forEach(function (id) {
+  var b = document.getElementById(id);
+  if (!b) return;
+  b.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    window.interactQueued = true;
+  });
+  b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+});
+
+/* --- Restart button: a plain page reload. The game keeps no saved state,
+   so reloading is a complete, reliable restart from the car. --- */
+document.getElementById('restart-btn').addEventListener('click', function () {
+  window.location.reload();
+});
+
+/* --- Full screen ---
+   Requests fullscreen on the game shell element itself (never the page
+   root), then tries to lock landscape. Every step is guarded: a browser
+   without element fullscreen, or one that refuses the lock, just leaves
+   the game windowed and playable. The button state follows the real
+   fullscreenchange event, including browser-initiated exits.
+   Refit: Phaser is in Scale FIT mode against #game-container. A
+   ResizeObserver on the container calls scale.refresh() whenever its real
+   size changes, and refresh is skipped while the container measures zero,
+   so Phaser can never latch onto a collapsed size mid-transition. A short
+   timed retry ladder on fullscreen/resize/orientation changes backs the
+   observer up. */
+(function () {
+  var btn = document.getElementById('fullscreen-btn');
+  var shell = document.getElementById('game-shell');
+  var container = document.getElementById('game-container');
+  if (!btn || !shell || !container) return;
+  var label = btn.querySelector('.fs-label');
+
+  function isFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  function refreshScale() {
+    if (container.clientWidth < 2 || container.clientHeight < 2) return;
+    var g = window.__phaserGame;
+    if (g && g.scale && typeof g.scale.refresh === 'function') {
+      try { g.scale.refresh(); } catch (e) {}
+    }
+  }
+  function refreshSoon() {
+    refreshScale();
+    [80, 250, 500, 900].forEach(function (ms) { setTimeout(refreshScale, ms); });
+  }
+  function syncBtn() {
+    var on = isFs();
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.setAttribute('aria-label', on ? 'Exit full screen' : 'Enter full screen');
+    btn.title = on ? 'Exit full screen' : 'Full screen';
+    if (label) label.textContent = on ? 'Exit' : 'Full';
+    refreshSoon();
+  }
+  if (typeof window.ResizeObserver === 'function') {
+    var lastW = 0, lastH = 0, queued = false;
+    new ResizeObserver(function () {
+      var w = container.clientWidth, h = container.clientHeight;
+      if (w === lastW && h === lastH) return;
+      lastW = w; lastH = h;
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () {
+        queued = false;
+        refreshScale();
+        setTimeout(refreshScale, 120);
+      });
+    }).observe(container);
+  }
+  function tryLockLandscape() {
+    try {
+      if (window.screen && screen.orientation && typeof screen.orientation.lock === 'function') {
+        var r = screen.orientation.lock('landscape');
+        if (r && typeof r.catch === 'function') r.catch(function () {});
+      }
+    } catch (e) {}
+  }
+  function enterFs() {
+    var req = shell.requestFullscreen || shell.webkitRequestFullscreen;
+    if (!req) return; /* fullscreen unsupported: tap does nothing, game stays playable */
+    try {
+      var res = req.call(shell);
+      if (res && typeof res.then === 'function') {
+        res.then(function () { tryLockLandscape(); }).catch(function () {});
+      } else {
+        setTimeout(tryLockLandscape, 60);
+      }
+    } catch (e) {}
+    setTimeout(function () { if (isFs()) tryLockLandscape(); }, 350);
+  }
+  function exitFs() {
+    var ex = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!ex) return;
+    try {
+      var r = ex.call(document);
+      if (r && typeof r.catch === 'function') r.catch(function () {});
+    } catch (e) {}
+  }
+  btn.addEventListener('click', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isFs()) exitFs(); else enterFs();
+  });
+  document.addEventListener('fullscreenchange', syncBtn);
+  document.addEventListener('webkitfullscreenchange', syncBtn);
+  window.addEventListener('resize', refreshSoon);
+  window.addEventListener('orientationchange', refreshSoon);
+})();
+
+/* ================= Shared game state + DOM quest log ================= */
+window.gameState = { quest: 'outbound', hasSeenSnake: false, hearts: 3, complete: false };
+
+function updateDomHUD() {
+  var gs = window.gameState;
+  var el = document.getElementById('dom-quest');
+  if (el) {
+    el.textContent = gs.quest === 'outbound'
+      ? 'Explore the maze and find the corn snake'
+      : (gs.quest === 'return' ? 'Follow the orange ribbons back to the car safely' : 'Complete! You made it back to the car safely');
+  }
+  var ie = document.getElementById('dom-items');
+  if (ie) ie.textContent = (gs.hearts === 3 ? '♥♥♥' : gs.hearts === 2 ? '♥♥♡' : gs.hearts === 1 ? '♥♡♡' : '♡♡♡') + ' (' + gs.hearts + ')';
+  var s1 = document.getElementById('step-1'), s2 = document.getElementById('step-2'), s3 = document.getElementById('step-3');
+  if (s1 && gs.quest !== 'outbound') s1.className = 'done';
+  if (s2 && gs.hasSeenSnake) s2.className = 'done';
+  if (s3 && gs.quest === 'complete') s3.className = 'done';
+  if (gs.quest === 'complete') {
+    var w = document.getElementById('win-banner');
+    if (w) w.classList.add('show');
+  }
+}
+function setDomPlace(t) {
+  var e = document.getElementById('dom-place');
+  if (e) e.textContent = t;
+}
+</script>
+
+<script>
+/* ================= The game ================= */
+
+/* ---------- Sprite sheet helpers ---------- */
+var ELI_IDLE = { down: 1, left: 4, right: 7, up: 10 };
+
+function ensureEliAnims(scene) {
+  if (scene.anims.exists('walk-down')) return;
+  scene.anims.create({ key: 'walk-down', frames: scene.anims.generateFrameNumbers('eli', { start: 0, end: 2 }), frameRate: 8, repeat: -1 });
+  scene.anims.create({ key: 'walk-left', frames: scene.anims.generateFrameNumbers('eli', { start: 3, end: 5 }), frameRate: 8, repeat: -1 });
+  scene.anims.create({ key: 'walk-right', frames: scene.anims.generateFrameNumbers('eli', { start: 6, end: 8 }), frameRate: 8, repeat: -1 });
+  scene.anims.create({ key: 'walk-up', frames: scene.anims.generateFrameNumbers('eli', { start: 9, end: 11 }), frameRate: 8, repeat: -1 });
+}
+function ensureAnimalAnims(scene) {
+  if (scene.anims.exists('gator-swim')) return;
+  scene.anims.create({ key: 'gator-swim', frames: scene.anims.generateFrameNumbers('gatorSheet', { start: 0, end: 3 }), frameRate: 4, repeat: -1 });
+  scene.anims.create({ key: 'cotton-slither', frames: scene.anims.generateFrameNumbers('cottonSheet', { start: 0, end: 3 }), frameRate: 6, repeat: -1 });
+  scene.anims.create({ key: 'squirrel-run', frames: scene.anims.generateFrameNumbers('squirrelSheet', { start: 0, end: 3 }), frameRate: 10, repeat: -1 });
+}
+function updateEliAnim(scene, player, mv) {
+  if (mv.left) { scene._facing = 'left'; player.anims.play('walk-left', true); }
+  else if (mv.right) { scene._facing = 'right'; player.anims.play('walk-right', true); }
+  else if (mv.up) { scene._facing = 'up'; player.anims.play('walk-up', true); }
+  else if (mv.down) { scene._facing = 'down'; player.anims.play('walk-down', true); }
+  else { player.anims.stop(); player.setFrame(ELI_IDLE[scene._facing || 'down']); }
+}
+function stopEliAnim(scene, player) {
+  if (!player) return;
+  player.anims.stop();
+  player.setFrame(ELI_IDLE[scene._facing || 'down']);
+}
+
+/* If a sprite sheet failed to load, build a plain stand-in sheet with the
+   same frame grid so the game still starts and every animation still has
+   frames to play. Only ever used on a load failure. */
+function fallbackSheet(scene, key, totalW, totalH, frameW, frameH, color) {
+  if (scene.textures.exists(key)) return;
+  try {
+    var tex = scene.textures.createCanvas(key, totalW, totalH);
+    if (!tex) return;
+    var ctx = tex.getContext();
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, totalW, totalH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    var cols = Math.floor(totalW / frameW), rows = Math.floor(totalH / frameH), i = 0;
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        ctx.strokeRect(c * frameW + 1, r * frameH + 1, frameW - 2, frameH - 2);
+        tex.add(i, 0, c * frameW, r * frameH, frameW, frameH);
+        i++;
+      }
+    }
+    tex.refresh();
+  } catch (e) {
+    if (window.console) console.warn('Fallback sheet failed for ' + key, e);
+  }
+}
+
+/* ---------- Code-drawn scenery textures (animals and Eli are real files) ---------- */
+function makeTextures(scene) {
+  if (scene.textures.exists('swamp')) return;
+  var g = scene.make.graphics({ x: 0, y: 0 }, false);
+
+  g.clear(); g.fillStyle(0x244734, 1); g.fillRect(0, 0, 32, 32);
+  g.fillStyle(0x2d5a3e, 1); g.fillRect(3, 7, 14, 2); g.fillRect(18, 20, 11, 2);
+  g.fillStyle(0x1a3325, 1); g.fillRect(10, 15, 9, 2); g.fillRect(24, 4, 6, 2); g.fillRect(5, 26, 12, 2);
+  g.fillStyle(0x4a7d5a, 0.55); g.fillRect(14, 10, 5, 1); g.fillRect(6, 21, 5, 1);
+  g.generateTexture('swamp', 32, 32);
+
+  g.clear(); g.fillStyle(0xa67c4a, 1); g.fillRect(0, 0, 32, 32);
+  g.fillStyle(0x8a6236, 1); g.fillRect(0, 0, 32, 2); g.fillRect(0, 15, 32, 2); g.fillRect(0, 30, 32, 2);
+  g.fillStyle(0xb98d55, 1); g.fillRect(2, 4, 26, 3); g.fillRect(4, 19, 24, 3);
+  g.fillStyle(0x6e4a22, 1); g.fillRect(3, 7, 2, 2); g.fillRect(27, 23, 2, 2);
+  g.generateTexture('plank', 32, 32);
+
+  g.clear(); g.fillStyle(0xb8ad97, 1); g.fillRect(0, 0, 32, 32);
+  g.fillStyle(0x9c927d, 1); g.fillRect(4, 5, 4, 3); g.fillRect(20, 14, 5, 3); g.fillRect(12, 25, 4, 3); g.fillRect(27, 27, 3, 2);
+  g.fillStyle(0xd0c6ad, 1); g.fillRect(14, 8, 4, 3); g.fillRect(6, 18, 3, 2); g.fillRect(24, 4, 3, 2);
+  g.generateTexture('gravel', 32, 32);
+
+  /* background cypress with Spanish moss, 84x110 (the deck cypress is the
+     real cypress-tree.png sprite instead) */
+  g.clear();
+  g.fillStyle(0x5d4630, 1); g.fillTriangle(28, 110, 42, 62, 56, 110); g.fillRect(37, 52, 10, 58);
+  g.fillStyle(0x4a3826, 1); g.fillRect(39, 52, 3, 58);
+  g.fillStyle(0x33512f, 1); g.fillCircle(42, 34, 30); g.fillCircle(20, 42, 18); g.fillCircle(64, 42, 18); g.fillCircle(42, 18, 20);
+  g.fillStyle(0x476b3d, 1); g.fillCircle(30, 28, 12); g.fillCircle(56, 26, 11);
+  g.lineStyle(2, 0x9aa88a, 0.95);
+  [16, 28, 42, 58, 70].forEach(function (x) {
+    g.lineBetween(x, 44, x + 2, 72 + (x % 3) * 6);
+    g.lineBetween(x + 4, 42, x + 3, 64);
+  });
+  g.generateTexture('cypress', 84, 110);
+
+  g.clear(); g.fillStyle(0x6b4c2e, 1); g.fillTriangle(2, 24, 8, 2, 14, 24);
+  g.fillStyle(0x543a22, 1); g.fillTriangle(8, 2, 11, 24, 14, 24);
+  g.generateTexture('knee', 16, 24);
+
+  g.clear(); g.lineStyle(2, 0x3e6b35, 1);
+  g.lineBetween(5, 40, 6, 10); g.lineBetween(12, 40, 12, 6); g.lineBetween(19, 40, 18, 12);
+  g.fillStyle(0x6b4420, 1); g.fillRect(10, 6, 4, 12); g.fillRect(4, 10, 3, 9);
+  g.fillStyle(0x5a8a48, 1); g.fillTriangle(12, 40, 4, 22, 10, 24); g.fillTriangle(13, 40, 20, 20, 14, 24);
+  g.generateTexture('cattail', 24, 40);
+
+  g.clear(); g.fillStyle(0x3f7d44, 1); g.fillCircle(14, 10, 11);
+  g.fillStyle(0x244734, 1); g.fillTriangle(14, 10, 25, 4, 25, 14);
+  g.fillStyle(0x356b3a, 1); g.fillCircle(10, 8, 4);
+  g.fillStyle(0xf2a7c3, 1); g.fillCircle(8, 7, 2.5);
+  g.generateTexture('lily', 28, 20);
+
+  /* car, top-down, 132x76, front facing east */
+  g.clear();
+  g.fillStyle(0x2f4d6e, 1); g.fillRoundedRect(4, 10, 124, 56, 14);
+  g.fillStyle(0x3f6a94, 1); g.fillRoundedRect(34, 16, 58, 44, 10);
+  g.fillStyle(0xbfe0f2, 1); g.fillRoundedRect(38, 20, 22, 36, 6); g.fillRoundedRect(66, 20, 22, 36, 6);
+  g.fillStyle(0x22384f, 1); g.fillRect(61, 18, 4, 40);
+  g.fillStyle(0xffe58a, 1); g.fillRect(122, 16, 6, 10); g.fillRect(122, 50, 6, 10);
+  g.fillStyle(0xd94f4f, 1); g.fillRect(2, 16, 5, 10); g.fillRect(2, 50, 5, 10);
+  g.fillStyle(0x181818, 1);
+  g.fillRoundedRect(18, 2, 26, 10, 4); g.fillRoundedRect(88, 2, 26, 10, 4);
+  g.fillRoundedRect(18, 64, 26, 10, 4); g.fillRoundedRect(88, 64, 26, 10, 4);
+  g.generateTexture('car', 132, 76);
+
+  /* orange ribbon marker, shown at junctions on the way home */
+  g.clear();
+  g.fillStyle(0xe07b24, 1);
+  g.fillTriangle(1, 8, 10, 2, 10, 14); g.fillTriangle(21, 8, 12, 2, 12, 14);
+  g.fillStyle(0xb83a1e, 1); g.fillCircle(11, 8, 3.5);
+  g.fillStyle(0xf5a44a, 1); g.fillRect(10, 11, 2, 5);
+  g.generateTexture('ribbon', 22, 16);
+
+  g.clear(); g.fillStyle(0xe53935, 1);
+  g.fillCircle(6, 6, 5); g.fillCircle(14, 6, 5); g.fillTriangle(1, 8, 19, 8, 10, 17);
+  g.generateTexture('heart', 20, 18);
+
+  g.destroy();
+}
+
+/* ---------- Dialogue box ---------- */
+function createDialogue(scene) {
+  var box = scene.add.container(0, 0).setDepth(200).setScrollFactor(0).setVisible(false);
+  var bg = scene.add.rectangle(400, 492, 764, 118, 0x142114, 0.95).setStrokeStyle(2, 0xf3e2b3);
+  var nameT = scene.add.text(34, 448, '', { fontSize: '16px', fontStyle: 'bold', color: '#ffd54f' });
+  var bodyT = scene.add.text(34, 472, '', { fontSize: '17px', color: '#ffffff', wordWrap: { width: 700 }, lineSpacing: 4 });
+  var hintT = scene.add.text(690, 540, 'E ▸', { fontSize: '13px', color: '#cfe8c0' });
+  box.add([bg, nameT, bodyT, hintT]);
+  var state = { open: false, lines: [], idx: 0, full: '', shown: 0, timer: null, onDone: null };
+  function stopTimer() { if (state.timer) { state.timer.remove(false); state.timer = null; } }
+  function typeLine() {
+    stopTimer();
+    state.shown = 0;
+    bodyT.setText('');
+    if (!state.full) return;
+    state.timer = scene.time.addEvent({
+      delay: 15, repeat: state.full.length - 1,
+      callback: function () { state.shown++; bodyT.setText(state.full.slice(0, state.shown)); }
+    });
+  }
+  return {
+    isOpen: function () { return state.open; },
+    open: function (name, lines, onDone) {
+      state.open = true; state.lines = lines; state.idx = 0; state.onDone = onDone || null;
+      nameT.setText(name);
+      box.setVisible(true);
+      state.full = lines[0];
+      typeLine();
+    },
+    advance: function () {
+      if (!state.open) return;
+      if (state.shown < state.full.length) {
+        stopTimer();
+        state.shown = state.full.length;
+        bodyT.setText(state.full);
+        return;
+      }
+      state.idx++;
+      if (state.idx >= state.lines.length) {
+        state.open = false;
+        box.setVisible(false);
+        stopTimer();
+        if (state.onDone) state.onDone();
+      } else {
+        state.full = state.lines[state.idx];
+        typeLine();
+      }
+    }
+  };
+}
+
+/* ---------- Heads-up display ---------- */
+function createHUD(scene) {
+  var c = scene.add.container(0, 0).setDepth(150).setScrollFactor(0);
+  c.add(scene.add.rectangle(400, 22, 800, 44, 0x142114, 0.86));
+  var hearts = [];
+  for (var i = 0; i < 3; i++) {
+    var h = scene.add.image(28 + i * 24, 22, 'heart');
+    c.add(h);
+    hearts.push(h);
+  }
+  c.add(scene.add.text(94, 13, 'Eli', { fontSize: '15px', color: '#ffd54f', fontStyle: 'bold' }));
+  var questT = scene.add.text(128, 13, '', { fontSize: '14px', color: '#ffffff', fontStyle: 'bold' });
+  c.add(questT);
+  var stepT = scene.add.text(618, 13, '', { fontSize: '14px', color: '#ffe082' });
+  c.add(stepT);
+  return {
+    refresh: function () {
+      var gs = window.gameState;
+      hearts.forEach(function (h, i) {
+        h.setAlpha(i < gs.hearts ? 1 : 0.22);
+        h.setTint(i < gs.hearts ? 0xffffff : 0x777777);
+      });
+      if (gs.quest === 'outbound') { questT.setText('Quest: Explore the maze, find the corn snake'); stepT.setText('Step 1 of 3'); }
+      else if (gs.quest === 'return') { questT.setText('Quest: Follow the ribbons back to the car'); stepT.setText('Step 3 of 3'); }
+      else { questT.setText('Quest: Complete ★ Back at the car!'); stepT.setText('Done!'); }
+      updateDomHUD();
+    }
+  };
+}
+
+/* ---------- Movement: keyboard, or the Game Boy D pad while held ---------- */
+function movementInput(cursors, keys) {
+  var speed = 175, vx = 0, vy = 0;
+  var ti = window.touchInput || {};
+  var left = cursors.left.isDown || keys.A.isDown || !!ti.left;
+  var right = cursors.right.isDown || keys.D.isDown || !!ti.right;
+  var up = cursors.up.isDown || keys.W.isDown || !!ti.up;
+  var down = cursors.down.isDown || keys.S.isDown || !!ti.down;
+  if (left) vx = -speed; else if (right) vx = speed;
+  if (up) vy = -speed; else if (down) vy = speed;
+  /* Animation reads the dominant axis, same as the keyboard behaviour:
+     updateEliAnim checks left/right before up/down, so a diagonal still
+     shows a clean side or vertical walk cycle. */
+  return { vx: vx, vy: vy, up: up, down: down, left: left, right: right };
+}
+
+/* ---------- Maze layout ----------
+   Grid 16 x 16, cell 160px, world 2560 x 2560. Segments are straight runs
+   of walkable boardwalk cells, [col1,row1,col2,row2]. The clearing cells
+   (13,0),(14,0),(13,1),(14,1) have exactly one walkable neighbour outside
+   the clearing: (12,1), the bridge cell, on the main route. Every other
+   branch dead-ends or loops back to the main route. */
+var CELL = 160, COLS = 16, ROWS = 16;
+var MAIN_SEGS = [[8,15,8,13],[8,13,5,13],[5,13,5,9],[5,9,11,9],[11,9,11,13],[11,13,13,13],[13,13,13,7],[13,7,7,7],[7,7,7,5],[7,5,4,5],[4,5,4,3],[4,3,12,3],[12,3,12,1],[12,1,14,1]];
+var EXTRA_SEGS = [[7,15,9,15],
+  [5,11,3,11],[3,11,3,9],[3,9,5,9],
+  [9,9,9,11],[9,11,11,11],
+  [6,13,6,15],[6,15,7,15],[8,14,11,14],[11,14,11,15],
+  [13,11,14,11],[14,11,14,10],
+  [13,8,14,8],[14,8,14,7],
+  [10,7,10,5],
+  [7,6,5,6],
+  [4,4,2,4],
+  [8,3,8,4],
+  [12,1,11,1],[11,1,11,0],
+  [13,1,13,0],[13,0,14,0]];
+var MAIN_WAYPOINTS = [[8,15],[8,13],[5,13],[5,9],[11,9],[11,13],[13,13],[13,7],[7,7],[7,5],[4,5],[4,3],[12,3],[12,1],[14,1]];
+function cellKey(c, r) { return c + ',' + r; }
+function cellCX(c) { return c * CELL + 80; }
+function cellCY(r) { return r * CELL + 80; }
+function expandSegs(segs) {
+  var set = {};
+  segs.forEach(function (s) {
+    var dc = s[2] === s[0] ? 0 : (s[2] > s[0] ? 1 : -1);
+    var dr = s[3] === s[1] ? 0 : (s[3] > s[1] ? 1 : -1);
+    var x = s[0], y = s[1];
+    while (true) {
+      set[cellKey(x, y)] = { c: x, r: y };
+      if (x === s[2] && y === s[3]) break;
+      x += dc; y += dr;
+    }
+  });
+  return set;
+}
+var WALKABLE = expandSegs(MAIN_SEGS.concat(EXTRA_SEGS));
+function isWalk(c, r) { return !!WALKABLE[cellKey(c, r)]; }
+function inClearing(px, py) { return px >= 2080 && py < 320; }
+
+/* ---------- Boot scene: load the real sprite files, tolerate failures ---------- */
+function BootScene() { Phaser.Scene.call(this, { key: 'Boot' }); }
+BootScene.prototype = Object.create(Phaser.Scene.prototype);
+BootScene.prototype.constructor = BootScene;
+BootScene.prototype.preload = function () {
+  /* A failed file is logged and loading continues; the game still starts,
+     with a stand-in sheet built in create() for anything missing. */
+  this.load.on('loaderror', function (file) {
+    if (window.console) console.warn('Asset failed to load, continuing without it:', file && file.key);
+  });
+  this.load.spritesheet('eli', 'data:image/png;base64,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', { frameWidth: 32, frameHeight: 48 });
+  this.load.spritesheet('gatorSheet', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAYAAAAAoCAYAAAD3/y2IAAAEr0lEQVR4nO2dLW8bSxRAr6PAgqiwiixFCgooCbEKQh6pwgwee7gk6JH2N7TcpH+hIMx6OKAKCQ2qVMmKAqOCcD9gTXZ2Mjuzs193dn2OFMk7djyz597d+Vh7LQIAAAAAAAAAAAAAAAAAAAAAAAAAABBnsZxvF8v5dsj6hqprDOBfF/zrgv8yM41KY1Jurzeldl1enTWW+PT4XLuefQH/uuBfF/wXZNcBvH33pvf6nx6fW8m3259DEFPBvy741wX/BWrBMzsxhPAY69V9bQ++5BnzQYB/HfCvC/53qASuzZSqb6qCcXl1tjXTuf++zEVE5OPXzcvzYzoI8K8L/nXBf8Fhk39qQs7Sbex2+oJh5JvHdhByBv+64F8X/PvptNcei+SmhHpg31QyZWrXBfgvg/9uydW/b1kkh6WdrunDf+MAVSX70+PzJOUbfFf1Q/t7cnpU2l79+7Pzg8I9APBf0Jd/8r+gb/8h1279+C8T8187GG4Q7IbEhFe9dizldffHhwnA3c3DS9n5xbGItDsZpYw2c/M5Rv/kf3x/fNTxX+XW1za3vjptyc1nTv6jB0BsdBlrTFWPNZbytpycHpXkG84vjht1AKnT3dx8js0/+d+OmP/U0b2vbaEY5OYzN/+li8ChZDcNdANjN37q0y8tYgdJ1egI0iD/88N2WuW66gQKcQ5EdieYy6uz7dt3bxr1rKGkd5+zg9a2/OT0SM4vjl+mNF2/f1fY7fNth1gs59unx2cxfzZ1Rzu+bfwXkP96/n0XKlOWOGLgP+w/OgVzGxMrH2IE5F7YsPn960/v9acQamvVEoQvJqGTf5cHTB3G4P/Ht58iIvL5+6V8+7T2Pq6zBCFC/rchJf9Tltvc5/Ffpm7+D/Y9gH3BTdLQ1HSxnG/tL3CYA8CXzO40lykw5Eib/DeP2wyAII3D9er+1SiozuinKX1dGe/6/ZuOqt3XtvkUhLum3MWJfur+Q9zdPIh8KpeR//r572IvC6XOCmJM3X8IX/4fiOyEr1f3M3edOZT8TQ6MqtFBavndzcOrK9u/f/15Vdb0/VNGMXVw22Vv+0Y7fY1u9sG/m8O+T0CYcnNyIf/rlTcllP8xbq83M3NtJmVJyMc++E/N/9ISkO9+Em0/Btcn9s4NXfdQpI4WhiRH/6Ydf3/+ICK70eZf/7x/ed489n0MlPzPk9CMQERv33P0n5r/B7E3vL3ezOxe2GD3NL7eOdQ4d3ss5Qaz73VPvE0/BVF1kavpVDE3nzn4j0H+6/p3cePRZnlK22cO/gf5JuqU8EkPJeHQX4WfOhr+fZD/BRr+bexZwdSPha79czO4BIx8boalQ67+DeR/Gfx3Sx/+BwvQGINjCzT347ZvxypSBCH3+6HjXxf864J/P4fxl3SDuzND1ZtKrNf8+HXj7YFzB/+64F8X/PtR7bUXy/k2h6WKffxJPBH8a4N/XfCfwW8C29xebyq/mt8lbdcmx/6j2CL41wb/uuB/h0rwfPINvh1qE5T16n42pVFLF+BfF/zrgv+C7DoAkW7lpAZ7H8C/LvjXBf+KxOR3XdeQ9Y0B/OuCf13wDwAAAAAAAAAAAAAAAAAAAAAA0+J/Ybm4i4ZFpJMAAAAASUVORK5CYII=', { frameWidth: 96, frameHeight: 40 });
+  this.load.spritesheet('cottonSheet', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAAYCAYAAAAVgCMkAAAEOUlEQVR4nO2cS24UMRCG/7lAJEgWCEWQ2bLIAs2KIwyIE3AADsYRgCNkxWouAImirIIi5QLNAtVQ45TtKr8T/K0g6e7x3/Wyy84Ak8lkMplM/j9WvQcQ4vzseDk9OfL+/vuPn0OPnxPTAjwuPZNx2W7Wi9aXhnO47Wa9XN/eAwBiAcMZMXhStQBj6iE0yQwYW8NT5PzseAFkXyM/3P36fWCTIQy03awX+ndqwBAjOB3pydUCjKEHyEtmwDg6nhoau9DvCX5dd6P4gv/Vy2cAgKubu/2/Cf6zq5u7g3sJN9O1IKbFh6vH1QL00QPIyUyjhxjBLjE+f3y78P9L/kWMksisRYZf9+XrNwDApw/v+yUAHizAoaO8O39tetbF7nJ/z8XuEqcnR94pTw0kLTQeKYHFuNhdij9vHTykyzp+rnkULT62m/ViSWhEr0QgFRk3XqTxEhT8RNcqSWgqvO8eHvz8fpdaBtPqieEGDE8gLrWdjweFbwYWwr2eNElVqndFlewHIDgD5UmtVSKTxpmSAAD0mwHEXjZBVTyGNGvwiedToBJO52pxp/DujCRGaAbk01Q6eHwV363imukm1w+0TWiWLjhdH/q9xj97Fhitj0k0SQBS11iq8KFmhQS/PnRt6LkphvMFPyGt4y1agIcBU3tNGkpo0vgs77t1QgtVy1jFDt1LhPSU0hDaabHMsCT4GFeA3AQpVSWvb+8fDCw0pUx1tNQmiFWnzzC5CS2kRTMFz7GXZP/YGAFd15mucd9PaImXqsVXyVMLgNtoo3tr2iMWM+5nSQ1jy1JrJTVBSmQ0V4jFASRRwL/snbNt6DZBnr94o9LH9VjWxL6OfqjSaBOMhNVeMftbnqm1i+X9aT5bcy4hpwBottpyExpPNikFwE1S6oNAmiZIrgOkNMWIUg7AyXUAq55cB3CJLTksDhBb/5auZMRjLgAulhktoCsAloLJsdrrwQvlH0ZY14HuNhh/pib4S08BUz/L1xSrrSGWBFKadKE1sPTeai4BXUJ6tMumWBOY02IJKG2DWrUQNf1tf1OoCWTtOqZW/JpNIO3z3aC3boO1aAIR2m2g3odxYlok/4oFtHUb2EeJJrBvbISmS2/ZBubk+tvBzdptuhjuwRwgnP1G2AaKBXxs9tNyG4iw7AP7psot9+E1WoC8g2A1qyUnpoX7f4oeIL6sKaFDfEDolJ72KGhud7IVviaYpqsPjHEQBLCdz8+ZAuei6dRbjoJLJw1b+pnGLpaj4JrlXEktqj3RVEfzNXOAsY6CArYeBTDWUVCgfhOsNLEio8VXaHofBedjsdA6ZkzdaSBf0CiBz7E0D3vPWIgcu/ScAbiU+kvQEfyslhagnh7TOnn+Oeh4PAW7zD8H91NbT9LD5xdCjEnoCyGAx2GP+YUwf2mlZ7iXNsnHugsyKvMr4SaTyWQymUxq8Ado5WN0KCwCLgAAAABJRU5ErkJggg==', { frameWidth: 64, frameHeight: 24 });
+  this.load.spritesheet('cornSheet', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAAAoCAYAAACoy/XoAAAFRUlEQVR4nO2bPU8cMRCG51DKCKWIUIQIogQqGiREQUmNlJ42P4KaH5GWPhI1ZQoUiYaKXIk4dIqiFBGiZlPNMTc3M7Z37d3ldp7qPnbtfe0Zezz2AjiO4ziO4ziO4zjOQBh1/QAOwP3ZbiX9vnV+5/1TGG/gjrk/261ur57mfts7Xp19dicoizduh0jGj+wdr8LRtyn8+LoOAO4IpfBG7Qga9kgzwNG36ew7OsHv7y+z3w7GY++7DHgjdoQW91NwBkDD//RlxWeCzHhjdkiMEyDoBD7y58Ubs2NSnGDr/G70c3u7AnBHyIU3Yg+IcQIPfcrwrusHGDrXp5tzxj+dPM8+r39+DwBu/CVxB+gZaPQAbvht0FkDX+5vzI18JzePg+rsy/2NCje8ppPnOcMHGJbxh1LClNzt0koj8xjX2vzhLIMhaPqpXin0AVgO/RrXp5sV1arZxdrOSrEBInvjhhZ0mkhEcgJOn40iRb/UsTH0WX8MfPbfO16F6eQZ/vx6Ea9Hm+C2kyNqaFxAShoPSZkBYujSIJrox47nTiD9ZvGWHIIbP4KDgRYCWTbTRH/SjfThU42VTvEAsODtazsrC/ekGAFtoFLridz66RoA4FUv/x5DG/qbgANFSphDBwLrPgCAw4uHWpqjbtK8FkA2BN7ZOeGNZIVUuQyhpP7Q6M/LKqG/dELCWuQi0mzIv4cWyADps2G2NGhJo9fqqRM/lyKHfs0AaNm59UvOfbm/UeVwgvuz3Yq3y97xqmrIqBV1cX3oJNJ/tM4UJwheaB3ZBZBDFwoNdWLDBl4fr0MSLz0j1tckRuxCP4AcBklOpi0caX2Wfm12axpbSwtdSsiQt87vRtL6Slsf3V49zTlXrAObF1npy1DHSwsagLARWLEe72xelpReROp0Zhf6AXTj57MBJeRomn7LAUL3SoTecaBwLVYcj30hOYDV73is/OHvP7FsNQSSvI9OQRIlQxJppEOvB3g9Oqw9X+rU2IX+mPBGc4KQQ2r6tZCE1nF9ulmFFpl1smEpRz3wGgyrYtqavlOx+fFDJTmBWLEmRut862FSRk1EGulDb04h6ATW1Bqqv0v9Ulmx4VDMM3H9WpiBZUjOQcugm1nY7m1saPF6aVaNgraBLxXxehcqj+382Ng2x+JQS4XReunrgzHxpVZXH/RLhi5li1LKoVhOYBk/ouXmqYGH1nF105aclBmBgu9XRDlAKIcPEI7vchAjMpQ2BEh3gK71W8aPz6LNLrH6pRjbcoAmm5m5N+7qhF/4bsVcq8V0fojp5LlYSjRUrvS/9JvWYH3UH2P8/LN2PSLp1NYHMb+F6qN1lNi1rlvuwXg8WlgEU89uuttZAisNdnLzOOLn6+n/iKWrb/pjsj7I4cVDI/1oRDS+1o5rWFm5vp1uteqe/aGlr7QcPG/QrfM7tfGRlLgvVBaPUfmxAooWstCGGbp+qX6+uKXEHtdo0/BTM30AxAGs7X5qBFpMqXVYjsWOVnbMs1gbRXSzZOj6Naz8e5NkQ18o+kZYrpW+NbX3mWXQb+XfcU+Czjq5NLfFzAG0lb2WXQid6weI20CJoUlcK8Wqs+tv5r8PWX+ItzCa12EuBgYIb9xo+WFrAYrkjIG1Tk05KsDXAADD1T9UoncFKamNXwLpGTQjTM2FU4akf4jEnU1g8JGRHmdtA62etuLkoetfJmqPggB2h7exExxzzqbETrBVduieJrShf2hEZYG0E4jWGQwpVq5zGM56cbyt06lD17/MLPSINjpojal1gLRQtHLS2jXWPXU6PzT6DV3/0PgPb6CfDs5uNeYAAAAASUVORK5CYII=', { frameWidth: 64, frameHeight: 40 });
+  this.load.spritesheet('squirrelSheet', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAAAgCAYAAADaInAlAAADcElEQVR4nO1aIYziQBT9JeTE5bJZcWrlqooLetVqFKk8hUSsRtQd5xBoxApCUEhkNQpNVqCQKAQhmxWYniCf+x3+tJ1h2ikwLyHQDp3/3p//fz9DARwcHBwcHBzuEZ5tAhzCwI/xc3+2qiRH07ClucYRoWTKhmi7bC429NvUfAqAQbuREG4jCAbthrXAq4J+G6gBHMVv94ezwbKcEAZ+XNTi59FgU3/RQZ+loWabgDj+8+EbpB2b5mBbPwCv2WTwpc1Vp0bFLDDhfB2YskuFv7+9xAAAneGCbbBs6y/CVh79iSaQkjBJKE80cyUYz+tkKQpGrDc79jyFDf2cbjx3SXXKq7/GRT2K13U+QozANOejvbTjvEA7z0+PiZc4ztmwoZ9yEPno3ApU9NfRqBjxus6nRjDqAI4R+Pz0CO9vLzEtQ2LpzSrDWUEkw5/pBwAA/P396zQP8rCpX2ZPVoFM66/jAnCCdcsgjUDZOOd8yoHa3u4P2sKzYFt/Wu9BbwUPP75rcclCPYsEEuhOlh6S1zGUJwM5h2/3B6kjdfHabMI8ik7HtvVnBZrpxaf6E78COODimMxASqA/W3lh4MeyMmxq8dHxr83m//fh4jRuSz8GnljxEEXr99KaHBRvMgKRAACA3+qd7oVcs6Mjns5Ps1z8Dtqugn5Zo1eGfg93wWRNkCoJVQII1QCgdtLAcaBNWFX1ZwWeKf2JLBCbsDIIUISBH9OF4OzntSuzz9muin6xGpWhP5EJ4sVlLYAImg00A1VtA8BZpslwr/pPTWB3skztB3QJAOQTTYH/hw/ajXj/+WW8C+ZQNf3IpWj90lKMn8vKQBmQC/JQ4TAeTQFA/QGLe9J/9kAIXoC/y+lulg0g+fVmB53hwptHkbS5QoxH04scT/XvP790pzGCovXXZQPdydLD6MNtzHkUKUWg3+p5YeDHJh9xwoDsSASa+hsVN35wTh3949EUqq6frQAi+rOV1xkuPNUIRDImFgWdmOVMOm7C8TQJ8ur3Wz3v0tJfFqQVgFu0MPDj9WZ3dCzZRZNdh7t8eF5nQWTBkzUfHb8kC6kGgGNDFwZ+vBbur/gd2XFVkVkBVAWkOeBan7O7RU0INgBk2Q+gFhDiNVXPhjzgNF1r9qeCe1RZJdqvPTM4pN2OxCeKb1G/g4ODg8NN4R+n+Q4rQUAxggAAAABJRU5ErkJggg==', { frameWidth: 32, frameHeight: 32 });
+  this.load.image('cypressTree', 'data:image/png;base64,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');
+};
+BootScene.prototype.create = function () {
+  fallbackSheet(this, 'eli', 96, 192, 32, 48, '#c94f38');
+  fallbackSheet(this, 'gatorSheet', 384, 40, 96, 40, '#3f6b35');
+  fallbackSheet(this, 'cottonSheet', 256, 24, 64, 24, '#3a3a3a');
+  fallbackSheet(this, 'cornSheet', 192, 40, 64, 40, '#d97b2f');
+  fallbackSheet(this, 'squirrelSheet', 128, 32, 32, 32, '#8a6a48');
+  if (!this.textures.exists('cypressTree')) {
+    var g = this.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0x33512f, 1); g.fillCircle(320, 130, 130); g.fillCircle(190, 170, 80); g.fillCircle(450, 170, 80);
+    g.fillStyle(0x5d4630, 1); g.fillRect(140, 180, 26, 220);
+    g.fillStyle(0x6e4f2e, 1); g.fillRect(140, 292, 342, 18);
+    g.generateTexture('cypressTree', 640, 400);
+    g.destroy();
+  }
+  ensureEliAnims(this);
+  ensureAnimalAnims(this);
+  this.scene.start('Bayou');
+};
+
+/* ---------- Bayou scene ---------- */
+function BayouScene() { Phaser.Scene.call(this, { key: 'Bayou' }); }
+BayouScene.prototype = Object.create(Phaser.Scene.prototype);
+BayouScene.prototype.constructor = BayouScene;
+
+BayouScene.prototype.create = function () {
+  makeTextures(this);
+  ensureEliAnims(this);
+  ensureAnimalAnims(this);
+  var self = this;
+  var W = COLS * CELL, H = ROWS * CELL;
+  this.physics.world.setBounds(0, 0, W, H);
+  this.cameras.main.setBounds(0, 0, W, H);
+  this.cutscene = false;
+  this.invulnUntil = 0;
+  this.momentTriggered = false;
+  this.gatorOnWalk = false;
+  this.restReached = false;
+  this.checkpoint = { x: cellCX(8), y: cellCY(15) - 40 };
+  this.restPos = { x: cellCX(11), y: cellCY(11) };
+  this.clearingPos = { x: cellCX(13), y: cellCY(1) };
+
+  /* Ground: swamp water everywhere */
+  this.add.tileSprite(0, 0, W, H, 'swamp').setOrigin(0).setDepth(0);
+
+  /* Gravel parking lot, row 15, columns 7 to 9 */
+  this.add.tileSprite(cellCX(7) - 80, cellCY(15) - 80, CELL * 3, CELL, 'gravel').setOrigin(0).setDepth(1);
+  this.add.text(cellCX(8), cellCY(15) + 58, '— — —  parking  — — —', { fontSize: '12px', color: '#5a5344', fontStyle: 'italic' }).setOrigin(0.5).setDepth(2);
+
+  /* Boardwalk: one plank tile per walkable cell, posts and rails where a
+     cell edge faces open water */
+  Object.keys(WALKABLE).forEach(function (k) {
+    var cell = WALKABLE[k];
+    if (cell.r === 15) return; /* parking row is gravel, not planks */
+    var cx = cellCX(cell.c), cy = cellCY(cell.r);
+    self.add.tileSprite(cx - 80, cy - 80, CELL, CELL, 'plank').setOrigin(0).setDepth(2);
+    var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+    dirs.forEach(function (d) {
+      if (isWalk(cell.c + d[0], cell.r + d[1])) return;
+      var ex = cx + d[0] * 76, ey = cy + d[1] * 76;
+      if (d[0] !== 0) {
+        self.add.rectangle(ex, cy - 40, 6, 22, 0x6e4a22).setDepth(4);
+        self.add.rectangle(ex, cy + 40, 6, 22, 0x6e4a22).setDepth(4);
+        self.add.rectangle(ex, cy, 4, 150, 0x7d5527).setDepth(4);
+      } else {
+        self.add.rectangle(cx - 40, ey, 22, 6, 0x6e4a22).setDepth(4);
+        self.add.rectangle(cx + 40, ey, 22, 6, 0x6e4a22).setDepth(4);
+        self.add.rectangle(cx, ey, 150, 4, 0x7d5527).setDepth(4);
+      }
+    });
+  });
+
+  /* Bridge: cell (12,1), the only way into the clearing. Drawn over the
+     plank tile: a wider dark channel, a shadow, lighter planks laid
+     crosswise, posts and double rails on both sides. */
+  (function buildBridge() {
+    var bx = cellCX(12), by = cellCY(1), i;
+    self.add.rectangle(bx, by, CELL + 72, CELL + 44, 0x1d3a29, 1).setDepth(2);
+    self.add.rectangle(bx - 40, by - 52, 120, 10, 0x2d5a3e, 0.8).setDepth(2);
+    self.add.rectangle(bx + 30, by + 58, 140, 10, 0x2d5a3e, 0.8).setDepth(2);
+    self.add.rectangle(bx + 62, by - 30, 60, 8, 0x4a7d5a, 0.6).setDepth(2);
+    self.add.rectangle(bx + 5, by + 13, CELL + 30, 96, 0x0d1f13, 0.45).setDepth(3);
+    self.add.rectangle(bx, by, CELL + 30, 92, 0xc99a5b, 1).setDepth(3);
+    for (i = -4; i <= 4; i++) {
+      self.add.rectangle(bx + i * 21, by, 17, 92, i % 2 === 0 ? 0xd8ab6a : 0xbf8c4e, 1).setDepth(3);
+      self.add.rectangle(bx + i * 21, by, 2, 92, 0x8a6236, 1).setDepth(3);
+    }
+    self.add.rectangle(bx, by - 46, CELL + 30, 4, 0xa87c40, 1).setDepth(3);
+    self.add.rectangle(bx, by + 46, CELL + 30, 4, 0xa87c40, 1).setDepth(3);
+    [-52, 52].forEach(function (off) {
+      self.add.rectangle(bx, by + off, CELL + 34, 7, 0x6e4a22, 1).setDepth(5);
+      self.add.rectangle(bx, by + off * 0.62, CELL + 34, 4, 0x7d5527, 1).setDepth(5);
+      [-84, -42, 0, 42, 84].forEach(function (pxo) {
+        self.add.rectangle(bx + pxo, by + off, 9, 15, 0x543a22, 1).setDepth(5);
+      });
+    });
+    self.add.text(bx, by + 68, '~ bridge over the channel ~', { fontSize: '11px', color: '#d9f2c8', backgroundColor: '#00000066', padding: { x: 5, y: 2 } }).setOrigin(0.5).setDepth(6);
+  })();
+
+  /* Rest platform at (11,11), midway on the main route */
+  this.add.tileSprite(cellCX(11) - 104, cellCY(11) - 104, CELL + 48, CELL + 48, 'plank').setOrigin(0).setDepth(2);
+  this.add.rectangle(cellCX(11), cellCY(11), CELL + 54, CELL + 54, 0x000000, 0).setStrokeStyle(6, 0x6e4a22).setDepth(3);
+  this.add.rectangle(cellCX(11) - 52, cellCY(11) - 46, 64, 12, 0x8a6236).setDepth(4);
+  this.add.rectangle(cellCX(11) + 52, cellCY(11) + 46, 64, 12, 0x8a6236).setDepth(4);
+  this.add.text(cellCX(11), cellCY(11) + 64, 'REST PLATFORM', { fontSize: '11px', color: '#3d2c12', backgroundColor: '#e8d9a8cc', padding: { x: 6, y: 2 } }).setOrigin(0.5).setDepth(6);
+
+  /* Hidden clearing outline, far north east corner */
+  this.add.rectangle(2320, 160, 472, 312, 0x000000, 0).setStrokeStyle(6, 0x6e4a22).setDepth(3);
+
+  /* Collision: merge each row's blocked cells into wide static zones */
+  this.obstacles = [];
+  for (var r = 0; r < ROWS; r++) {
+    var runStart = -1;
+    for (var c = 0; c <= COLS; c++) {
+      var blocked = (c < COLS) && !isWalk(c, r);
+      if (blocked && runStart < 0) runStart = c;
+      if (!blocked && runStart >= 0) {
+        var x0 = runStart * CELL, x1 = c * CELL;
+        var z = self.add.zone((x0 + x1) / 2, r * CELL + 80, x1 - x0, CELL);
+        self.physics.add.existing(z, true);
+        self.obstacles.push(z);
+        runStart = -1;
+      }
+    }
+  }
+
+  /* Dressing on water cells: cypress trees away from the walk, knees,
+     cattails and lily pads near it, plus drifting fireflies and haze */
+  var blockedCells = [];
+  for (var bc = 0; bc < COLS; bc++) for (var br = 0; br < ROWS; br++) if (!isWalk(bc, br)) blockedCells.push([bc, br]);
+  function nearWalk(c, r) { return isWalk(c + 1, r) || isWalk(c - 1, r) || isWalk(c, r + 1) || isWalk(c, r - 1); }
+  var rng = new Phaser.Math.RandomDataGenerator('cypress-bayou-maze');
+  var shuffled = rng.shuffle(blockedCells.slice());
+  shuffled.filter(function (p) { return !nearWalk(p[0], p[1]); }).slice(0, 34).forEach(function (p) {
+    self.add.image(cellCX(p[0]) + rng.between(-24, 24), cellCY(p[1]) + rng.between(-16, 16), 'cypress').setDepth(6);
+  });
+  var edgeCells = shuffled.filter(function (p) { return nearWalk(p[0], p[1]); });
+  edgeCells.slice(0, 26).forEach(function (p) { self.add.image(cellCX(p[0]) + rng.between(-50, 50), cellCY(p[1]) + rng.between(-50, 50), 'knee').setDepth(3); });
+  edgeCells.slice(26, 52).forEach(function (p) { self.add.image(cellCX(p[0]) + rng.between(-50, 50), cellCY(p[1]) + rng.between(-50, 50), 'cattail').setDepth(3); });
+  edgeCells.slice(52, 78).forEach(function (p) { self.add.image(cellCX(p[0]) + rng.between(-40, 40), cellCY(p[1]) + rng.between(-40, 40), 'lily').setDepth(1); });
+  for (var i = 0; i < 70; i++) {
+    var fx = rng.between(40, W - 40), fy = rng.between(40, H - 40);
+    var dot = this.add.circle(fx, fy, 2.2, 0xffe98a, 0.85).setDepth(7);
+    this.tweens.add({ targets: dot, alpha: 0.15, y: fy - 10, duration: rng.between(900, 2000), yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  }
+  [420, 1100, 1800, 2350].forEach(function (hy) { self.add.rectangle(1280, hy, 2560, 60, 0xffffff, 0.05).setDepth(7); });
+
+  /* Signs: trailhead, warnings, and one per dead end */
+  this.signs = [];
+  function addSign(c, r, offX, offY, label, heading, lines) {
+    var x = cellCX(c) + (offX || 0), y = cellCY(r) + (offY || 0);
+    self.add.rectangle(x, y + 16, 8, 30, 0x5a3d1e).setDepth(5);
+    self.add.rectangle(x, y, 150, 30, 0x8a6236).setStrokeStyle(2, 0x4a2f12).setDepth(5);
+    self.add.text(x, y, label, { fontSize: '11px', color: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(6);
+    self.signs.push({ x: x, y: y, heading: heading, lines: lines });
+  }
+  addSign(7, 15, -30, -52, 'TRAILHEAD →', 'Trailhead Sign', ["CYPRESS BAYOU TRAIL: a boardwalk maze over the swamp to a hidden clearing.", "Watch for gators and snakes. Stay on the boardwalk. Dead ends have little signs, and only one route reaches the corn snake. Good luck, explorer!"]);
+  addSign(13, 11, 58, -58, '⚠ GATOR CROSSING', 'Warning Sign', ["GATOR CROSSING: an alligator slides across the boardwalk just north of here from time to time.", "Stop, watch, and wait until it has slid all the way back into the water before you cross. It always goes back."]);
+  addSign(11, 11, -58, -58, 'REST PLATFORM', 'Rest Platform', ["A wide, quiet platform about halfway through the maze. Benches, shade, and no snakes on the planks.", "If a hazard bumps you from here on, this platform is where you will catch your breath."]);
+  addSign(12, 1, -110, -54, '🌉 BRIDGE', 'Bridge Sign', ["BRIDGE AHEAD: one short bridge over a wide channel of open swamp water, and then the viewing deck.", "It is the only way onto the deck. Cross it slow, hold the rails, and look up when you get there: somebody is sunbathing on the big cypress branch."]);
+  addSign(11, 15, 0, -40, 'MOSS HOLLOW', 'Moss Hollow', ["Dead end! Nothing here but Spanish moss, frog song, and a very smug heron statue. Well, a heron shaped stump.", "Real herons can stand perfectly still for an hour waiting for a fish. You do not have to. Head back!"]);
+  addSign(14, 10, 0, -44, 'TURTLE LOG', 'Turtle Log', ["Dead end, but look at that log: turtles line up on sunny logs to warm their shells, biggest in the middle.", "No corn snake here, just turtles. Back to the maze!"]);
+  addSign(14, 7, 0, -44, 'HERON BEND', 'Heron Bend', ["Dead end. A great blue heron fishes this bend at dawn, spearing minnows with a bill like a spear.", "Wrong way for the corn snake, right way for a quiet minute."]);
+  addSign(10, 5, 0, -44, 'MISTAKE BAY', 'Mistake Bay', ["Dead end! Local legend says every explorer ends up in Mistake Bay exactly once. You are officially an explorer now.", "Mistakes are just the maze teaching. Turn around and try another branch."]);
+  addSign(5, 6, 0, -44, 'MOSQUITO FLATS', 'Mosquito Flats', ["Dead end, and the mosquitoes know it. The swamp's unofficial welcoming committee lives here.", "Fun fact: only female mosquitoes bite. Slap none, just retreat bravely!"]);
+  addSign(2, 4, 0, -44, 'CYPRESS CATHEDRAL', 'Cypress Cathedral', ["Dead end, and the prettiest one: giant cypress trees in a ring, moss hanging like curtains.", "Cypress knees, those knobbly cones poking out of the water, help the trees breathe and stand firm. No snake here, head back."]);
+  addSign(8, 4, 0, -44, 'GATOR GRASS', 'Gator Grass', ["Dead end. This tall grass is called gator grass, and alligators really do hide in it to ambush frogs.", "You are safe on the planks. The corn snake is not this way, though."]);
+  addSign(11, 0, 0, 44, 'NORTH WIND END', 'North Wind End', ["Dead end at the very top of the maze! You can feel the north wind, but the clearing is not here.", "Close to the top corner, yet so far. The corn snake hides somewhere else in the north east."]);
+  addSign(3, 10, 0, 48, 'LOOP LAGOON', 'Loop Lagoon', ["This little loop circles Loop Lagoon, where the water is green as pea soup and twice as quiet.", "Loops are the maze being friendly: no backtracking needed, just keep walking."]);
+
+  /* Car on the gravel lot */
+  this.carPos = { x: cellCX(9) + 10, y: cellCY(15) };
+  this.add.image(this.carPos.x, this.carPos.y, 'car').setDepth(5);
+  this.add.text(this.carPos.x, this.carPos.y - 54, '🚗 Your car', { fontSize: '12px', color: '#fff', backgroundColor: '#00000088', padding: { x: 6, y: 3 } }).setOrigin(0.5).setDepth(6);
+
+  /* The viewing deck: big cypress sprite, branch painted in.
+     Scene branch line: world y 118, spanning x 2172 to 2504. In the
+     640x400 image the branch centreline is at local y 310 and runs from
+     local x 150 to 482, so placing the image top-left at (2022,-192)
+     lands the painted branch exactly on the scene line. Depths: tree 6,
+     snake 8, squirrel 11, so the squirrel visibly runs over the snake. */
+  this.branchY = 118;
+  this.branchLeft = 2172;
+  this.branchRight = 2504;
+  this.bushPos = { x: 2446, y: 272 };
+  this.add.image(2022, -192, 'cypressTree').setOrigin(0, 0).setDepth(6);
+  this.add.circle(this.bushPos.x - 24, this.bushPos.y + 8, 20, 0x33512f, 1).setDepth(4);
+  this.add.circle(this.bushPos.x + 2, this.bushPos.y, 26, 0x476b3d, 1).setDepth(4);
+  this.add.circle(this.bushPos.x + 28, this.bushPos.y + 9, 18, 0x3c6336, 1).setDepth(4);
+  this.add.circle(this.bushPos.x - 4, this.bushPos.y - 10, 12, 0x5a8a48, 0.9).setDepth(4);
+  this.add.text(2320, 52, 'HIDDEN CLEARING · VIEWING DECK', { fontSize: '11px', color: '#3d2c12', backgroundColor: '#e8d9a8cc', padding: { x: 6, y: 2 } }).setOrigin(0.5).setDepth(6);
+  this.cornLabel = this.add.text(2338, 152, '☀ corn snake sunbathing on the branch ☀', { fontSize: '11px', color: '#7a3c00', backgroundColor: '#ffe9b8cc', padding: { x: 5, y: 2 } }).setOrigin(0.5).setDepth(6);
+  /* Corn snake: frame 2, stretched out along the top of the branch */
+  this.cornPos = { x: 2338, y: this.branchY - 20 };
+  this.cornSnake = this.add.sprite(this.cornPos.x, this.cornPos.y, 'cornSheet', 2).setDepth(8).setScale(1.5, 1.15);
+  /* Where it lands when it drops: the deck planks straight below, clear of
+     the squirrel's bushes at (2446,272) and of the checkpoint area */
+  this.cornDropPos = { x: 2338, y: 224 };
+  this.squirrelRunY = this.branchY - 26;
+  this.squirrel = this.add.sprite(this.branchLeft + 8, this.squirrelRunY, 'squirrelSheet', 0).setDepth(11).setVisible(false);
+
+  /* Orange ribbons at main route junctions, hidden until the trip home */
+  this.ribbons = [];
+  MAIN_WAYPOINTS.forEach(function (wp) {
+    self.ribbons.push(self.add.image(cellCX(wp[0]) + 56, cellCY(wp[1]) - 56, 'ribbon').setDepth(6).setVisible(false));
+  });
+
+  /* Cottonmouths patrolling three main route corridors */
+  this.cottons = [];
+  function addCotton(c, r, dur) {
+    var cx = cellCX(c), cy = cellCY(r);
+    var s = self.physics.add.sprite(cx - 56, cy, 'cottonSheet', 0).setDepth(8);
+    s.play('cotton-slither');
+    s.body.setImmovable(true);
+    s.setData('prevX', s.x);
+    self.tweens.add({ targets: s, x: cx + 56, duration: dur, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    self.add.text(cx, cy - 26, '~ cottonmouth ~', { fontSize: '11px', color: '#ffe1a8', backgroundColor: '#00000066', padding: { x: 5, y: 2 } }).setOrigin(0.5).setDepth(6);
+    self.cottons.push(s);
+  }
+  addCotton(5, 11, 2100);
+  addCotton(10, 9, 2600);
+  addCotton(9, 3, 2300);
+
+  /* Alligator: swims in the water cell (12,10), lunges across the main
+     route corridor at (13,10) on a timer */
+  this.gatorHome = { x: cellCX(12), y: cellCY(10) };
+  this.gator = this.physics.add.sprite(this.gatorHome.x, this.gatorHome.y, 'gatorSheet', 0).setDepth(8);
+  this.gator.play('gator-swim');
+  this.gator.body.setImmovable(true);
+  this.add.text(this.gatorHome.x, this.gatorHome.y - 44, 'alligator: wait for it to slide back!', { fontSize: '11px', color: '#d9f2c8', backgroundColor: '#00000066', padding: { x: 5, y: 2 } }).setOrigin(0.5).setDepth(6);
+  this.startGatorCycle();
+
+  /* Player: Little Eli, physics body at the feet */
+  this._facing = 'up';
+  this.player = this.physics.add.sprite(cellCX(8), cellCY(15) + 20, 'eli', 10).setDepth(10);
+  this.player.body.setSize(20, 14);
+  this.player.body.setOffset(6, 34);
+  this.player.setCollideWorldBounds(true);
+  this.physics.add.collider(this.player, this.obstacles);
+  this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
+
+  /* Input and interface */
+  this.cursors = this.input.keyboard.createCursorKeys();
+  this.keys = this.input.keyboard.addKeys('W,A,S,D,E,SPACE,ENTER');
+  this.dialogue = createDialogue(this);
+  this.hud = createHUD(this);
+  this.hud.refresh();
+  setDomPlace('Gravel parking area');
+  updateDomHUD();
+  this.prompt = this.add.text(400, 410, '', { fontSize: '15px', color: '#fff', backgroundColor: '#142114dd', padding: { x: 10, y: 6 } }).setOrigin(0.5).setDepth(160).setScrollFactor(0).setVisible(false);
+  this.toast = this.add.text(400, 70, '', { fontSize: '16px', color: '#ffd54f', fontStyle: 'bold', backgroundColor: '#142114cc', padding: { x: 10, y: 6 } }).setOrigin(0.5).setDepth(170).setScrollFactor(0).setVisible(false);
+  this.input.on('pointerdown', function () {
+    if (self.dialogue.isOpen()) self.dialogue.advance();
+    else window.interactQueued = true;
+  });
+
+  this.time.delayedCall(350, function () {
+    self.dialogue.open('Cypress Bayou Trail', [
+      "Here we are! The car is parked, the air is warm and thick, and the boardwalk maze twists away across the swamp.",
+      "Goal: explore the maze, find the hidden clearing in a far corner, and see the corn snake. Then follow the orange ribbons back to the car safely. Stay on the boardwalk, and watch for gators and snakes."
+    ]);
+  });
+};
+
+BayouScene.prototype.showToast = function (text, ms) {
+  this.toast.setText(text).setVisible(true);
+  var self = this;
+  this.time.delayedCall(ms || 1700, function () { self.toast.setVisible(false); });
+};
+
+/* Gator loop: drift in its water cell, pause, lunge across the boardwalk,
+   wait, slide back, repeat. gatorOnWalk marks the dangerous window. */
+BayouScene.prototype.startGatorCycle = function () {
+  var self = this;
+  var homeX = this.gatorHome.x, homeY = this.gatorHome.y;
+  var crossX = cellCX(13), crossY = cellCY(10);
+  function cycle() {
+    if (!self.gator || !self.gator.active) return;
+    self.gatorOnWalk = false;
+    self.gator.setFlipX(true);
+    self.tweens.add({ targets: self.gator, x: homeX - 70, y: homeY - 14, duration: 1800, ease: 'Sine.easeInOut', onComplete: function () {
+      self.gator.setFlipX(false);
+      self.tweens.add({ targets: self.gator, x: homeX + 10, y: homeY + 10, duration: 1800, ease: 'Sine.easeInOut', onComplete: function () {
+        self.time.delayedCall(900, function () {
+          if (!self.gator || !self.gator.active) return;
+          self.gatorOnWalk = true;
+          self.gator.setFlipX(false);
+          self.tweens.add({ targets: self.gator, x: crossX, y: crossY, duration: 650, ease: 'Quad.easeIn', onComplete: function () {
+            self.time.delayedCall(1200, function () {
+              if (!self.gator || !self.gator.active) return;
+              self.gator.setFlipX(true);
+              self.tweens.add({ targets: self.gator, x: homeX, y: homeY, duration: 800, ease: 'Quad.easeOut', onComplete: function () {
+                self.gatorOnWalk = false;
+                self.time.delayedCall(600, cycle);
+              } });
+            });
+          } });
+        });
+      } });
+    } });
+  }
+  cycle();
+};
+
+BayouScene.prototype.startBlink = function () {
+  var self = this;
+  this.tweens.add({ targets: this.player, alpha: 0.25, duration: 110, yoyo: true, repeat: 9, onComplete: function () { if (self.player) self.player.setAlpha(1); } });
+};
+
+BayouScene.prototype.hitHazard = function (kind) {
+  var now = this.time.now;
+  if (now < this.invulnUntil || this.dialogue.isOpen() || this.cutscene) return;
+  this.invulnUntil = now + 2300;
+  window.gameState.hearts -= 1;
+  var self = this;
+  var label = kind === 'gator' ? 'Snap! The alligator was on the boardwalk!' : 'Careful! That was a cottonmouth!';
+  this.cameras.main.flash(180, 180, 40, 30);
+  if (window.gameState.hearts <= 0) {
+    /* Out of hearts: back to the car, hearts refilled, sighting kept */
+    window.gameState.hearts = 3;
+    this.hud.refresh();
+    this.player.setPosition(cellCX(8), cellCY(15) - 30);
+    this.player.setVelocity(0, 0);
+    this.checkpoint = { x: cellCX(8), y: cellCY(15) - 40 };
+    if (window.gameState.quest === 'return') this.checkpoint = { x: this.clearingPos.x, y: this.clearingPos.y };
+    else if (this.restReached) this.checkpoint = { x: this.restPos.x, y: this.restPos.y };
+    this._facing = 'up';
+    stopEliAnim(this, this.player);
+    this.dialogue.open('Back by the car', ["Phew, that was enough excitement. You are back by the car with a grown up, hearts full again.", "Your corn snake sighting still counts. Take a breath and try the maze again, nice and slow. Watch each hazard and wait for a clear gap."]);
+    this.startBlink();
+    return;
+  }
+  this.hud.refresh();
+  this.player.setPosition(this.checkpoint.x, this.checkpoint.y);
+  this.player.setVelocity(0, 0);
+  stopEliAnim(this, this.player);
+  this.showToast(label + '  −1 ♥  Back to safety…', 2100);
+  this.startBlink();
+};
+
+/* The deck cutscene, played once when the player steps onto the deck:
+   squirrel runs along the branch and across the snake, freezes, looks
+   back / away / back, both animals shake together, both fall together.
+   The squirrel lands in the bushes and dashes off; the snake drops to the
+   deck and curls up, staying there for the rest of the game. */
+BayouScene.prototype.playCornSnakeMoment = function () {
+  if (this.momentTriggered) return;
+  this.momentTriggered = true;
+  this.cutscene = true;
+  this.player.setVelocity(0, 0);
+  stopEliAnim(this, this.player);
+  var self = this;
+  var sq = this.squirrel;
+  var runY = this.squirrelRunY;
+  var startX = this.branchLeft + 8;
+  var pastX = this.cornPos.x + 108; /* stops just past the snake */
+  var bush = this.bushPos;
+
+  function finishMoment() {
+    self.dialogue.open('The viewing deck', [
+      "You crossed the bridge onto the viewing deck, and look up: a corn snake, orange with red blotches, sprawled out flat along the big cypress branch, sunbathing in the sun. It was here the whole time.",
+      "Then a squirrel came tearing along the branch from the trunk, quick as a blink, and ran straight across the corn snake's body, because it thought the snake was just part of the branch!",
+      "Just past the snake it stopped dead. It looked back, then away, then back again… and it figured it out. Right then the corn snake woke and shook under its feet, the squirrel gave one big shiver of its own, and WHOOPS, off the branch it fell, tumbling down into the soft bushes below. Not hurt one bit: up it popped and dashed away along the ground.",
+      "And the corn snake? The shake shook it right off the branch too: down it slid and dropped to the deck planks below, and it curled itself up in a tight little coil, calm and harmless as ever after its tumble. You found it, Eli, at the end of the whole maze. That is steps 1 and 2 done. Now for the way home: orange ribbons have appeared at the junctions along the correct route. Follow the ribbons back through the maze to the car, same hazards, same careful feet."
+    ], function () {
+      window.gameState.hasSeenSnake = true;
+      window.gameState.quest = 'return';
+      self.cutscene = false;
+      self.checkpoint = { x: self.clearingPos.x, y: self.clearingPos.y };
+      self.ribbons.forEach(function (rb) { rb.setVisible(true); });
+      self.hud.refresh();
+      setDomPlace('Hidden clearing deck');
+    });
+  }
+  function dashOff() {
+    sq.setAngle(0);
+    sq.setFlipX(false);
+    sq.play('squirrel-run');
+    self.tweens.add({ targets: sq, x: 2596, duration: 620, ease: 'Quad.easeIn',
+      onUpdate: function () { sq.y = bush.y - Math.abs(Math.sin(sq.x / 26)) * 6; },
+      onComplete: function () { sq.setVisible(false); sq.stop(); finishMoment(); } });
+  }
+  function scareAndFall() {
+    sq.setFlipX(true);
+    var drop = self.cornDropPos;
+    /* Snake and squirrel shake in the same moment, same jitter. No reset
+       for the snake afterwards: the shake is what shakes it loose. */
+    self.tweens.add({ targets: self.cornSnake, x: '+=4', duration: 45, yoyo: true, repeat: 5, ease: 'Sine.easeInOut' });
+    self.tweens.add({ targets: sq, x: '+=4', duration: 45, yoyo: true, repeat: 5, ease: 'Sine.easeInOut', onComplete: function () {
+      sq.stop();
+      sq.setFrame(2);
+      /* Both falls start in this same moment */
+      self.tweens.add({ targets: self.cornSnake, x: drop.x, y: drop.y, angle: 14, duration: 520, ease: 'Quad.easeIn', onComplete: function () {
+        self.cornSnake.setAngle(0);
+        self.cornSnake.setFrame(0); /* coiled */
+        self.cornSnake.setScale(1.25, 1.25);
+        self.cornPos = { x: drop.x, y: drop.y };
+        if (self.cornLabel) self.cornLabel.setVisible(false);
+        self.tweens.add({ targets: self.cornSnake, scaleY: 1.02, duration: 100, yoyo: true, repeat: 1, ease: 'Sine.easeOut' });
+      } });
+      self.tweens.add({ targets: sq, x: pastX + 14, y: bush.y - 6, angle: 330, duration: 640, ease: 'Quad.easeIn', onComplete: function () {
+        self.tweens.add({ targets: sq, scaleY: 0.75, duration: 90, yoyo: true, repeat: 1, onComplete: function () {
+          sq.setScale(1);
+          sq.setY(bush.y);
+          self.time.delayedCall(420, dashOff);
+        } });
+      } });
+    } });
+  }
+  function lookBackAndForth() {
+    sq.setFlipX(true); /* back toward the snake */
+    self.time.delayedCall(350, function () {
+      sq.setFlipX(false); /* away again */
+      self.time.delayedCall(350, function () {
+        sq.setFlipX(true); /* back toward the snake… uh oh */
+        self.time.delayedCall(350, scareAndFall);
+      });
+    });
+  }
+  sq.setPosition(startX, runY).setAngle(0).setFlipX(false).setVisible(true);
+  sq.play('squirrel-run');
+  this.tweens.add({ targets: sq, x: pastX, duration: 1180, ease: 'Linear', onComplete: function () {
+    sq.stop();
+    sq.setFrame(0); /* frozen just past the snake, about 0.7 s */
+    self.time.delayedCall(700, lookBackAndForth);
+  } });
+  /* One tiny sleepy shift from the snake as the squirrel crosses it */
+  this.time.delayedCall(620, function () {
+    self.tweens.add({ targets: self.cornSnake, x: self.cornPos.x + 3, duration: 320, yoyo: true, repeat: 1, ease: 'Sine.easeInOut' });
+  });
+};
+
+BayouScene.prototype.update = function () {
+  var interact = Phaser.Input.Keyboard.JustDown(this.keys.E) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE);
+  if (window.interactQueued) { interact = true; window.interactQueued = false; }
+
+  if (this.dialogue.isOpen()) {
+    this.player.setVelocity(0, 0);
+    stopEliAnim(this, this.player);
+    if (interact) this.dialogue.advance();
+    return;
+  }
+  if (this.cutscene) { this.player.setVelocity(0, 0); return; }
+
+  var mv = movementInput(this.cursors, this.keys);
+  this.player.setVelocity(mv.vx, mv.vy);
+  this.player.setFlipX(false);
+  updateEliAnim(this, this.player, mv);
+
+  var px = this.player.x, py = this.player.y;
+  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+
+  /* Cottonmouths face their direction of travel */
+  this.cottons.forEach(function (s) {
+    var prevX = s.getData('prevX');
+    if (s.x > prevX + 0.1) s.setFlipX(false);
+    else if (s.x < prevX - 0.1) s.setFlipX(true);
+    s.setData('prevX', s.x);
+  });
+
+  /* Rest platform checkpoint, once */
+  if (!this.restReached && dist(px, py, this.restPos.x, this.restPos.y) < 100) {
+    this.restReached = true;
+    this.checkpoint = { x: this.restPos.x, y: this.restPos.y };
+    this.showToast('Rest platform reached: new checkpoint!', 2200);
+  }
+
+  /* Location label */
+  var prow = Math.floor(py / CELL);
+  setDomPlace(prow >= 15 ? 'Gravel parking area'
+    : (inClearing(px, py) ? 'Hidden clearing deck'
+    : (Math.floor(px / CELL) === 12 && prow === 1 ? 'Bridge over the channel'
+    : (dist(px, py, this.restPos.x, this.restPos.y) < 110 ? 'Rest platform' : 'Boardwalk maze over the swamp'))));
+
+  /* Stepping onto the deck plays the corn snake moment, once */
+  if (!this.momentTriggered && inClearing(px, py)) { this.playCornSnakeMoment(); return; }
+
+  /* Hazards: fair hitboxes, the player must be truly close */
+  for (var ci = 0; ci < this.cottons.length; ci++) {
+    if (dist(px, py, this.cottons[ci].x, this.cottons[ci].y) < 30) { this.hitHazard('snake'); return; }
+  }
+  if (this.gatorOnWalk && Math.abs(py - this.gator.y) < 36 && Math.abs(px - this.gator.x) < 66) { this.hitHazard('gator'); return; }
+  if (Math.abs(py - cellCY(10)) < 32 && px > cellCX(13) - 80 && px < cellCX(13) + 80 && this.gator.x > cellCX(12) + 70) { this.hitHazard('gator'); return; }
+
+  /* Proximity prompts */
+  var nearCar = dist(px, py, this.carPos.x - 40, this.carPos.y) < 78 || dist(px, py, this.carPos.x, this.carPos.y) < 92;
+  var nearCorn = window.gameState.hasSeenSnake && dist(px, py, this.cornPos.x, this.cornPos.y) < 118;
+  var nearSign = null, nearSignD = 1e9;
+  this.signs.forEach(function (sg) {
+    var d = dist(px, py, sg.x, sg.y);
+    if (d < 70 && d < nearSignD) { nearSign = sg; nearSignD = d; }
+  });
+
+  if (nearCorn) this.prompt.setText('Press E to look at the corn snake').setVisible(true);
+  else if (nearCar && window.gameState.quest === 'return') this.prompt.setText('Press E to get in the car, you made it!').setVisible(true);
+  else if (nearCar) this.prompt.setText('Press E to look at the car').setVisible(true);
+  else if (nearSign) this.prompt.setText('Press E to read the sign').setVisible(true);
+  else this.prompt.setVisible(false);
+
+  if (!interact) return;
+  if (nearCorn) {
+    this.dialogue.open('Corn Snake', ["The corn snake is curled up in a snug little coil on the deck planks right below the big cypress branch, orange with red blotches, right where it landed after its tumble off the branch. Poor thing got shaken clean out of its sunny spot.", "It is not hurt, just resting after the excitement. Corn snakes are gentle and good to have around. They keep mice down and almost never bite. Best to just admire it from right here, and let it rest."]);
+  } else if (nearCar) {
+    if (window.gameState.quest === 'return') {
+      window.gameState.quest = 'complete';
+      window.gameState.complete = true;
+      this.hud.refresh();
+      var w = document.getElementById('win-banner');
+      if (w) w.classList.add('show');
+      this.dialogue.open('Back at the car', ["You made it back to the car safely!", "You solved the whole maze, followed the ribbons home, waited out the gator, dodged the cottonmouths, and spotted one beautiful corn snake. What a bayou hike!"]);
+    } else if (window.gameState.quest === 'complete') {
+      this.dialogue.open('Your car', ["Home time whenever you are ready. Or walk the maze once more, just for the fun of it."]);
+    } else {
+      this.dialogue.open('Your car', ["The car will wait right here at the trailhead.", "Head north into the maze when you are ready. Find the hidden clearing first, see the corn snake second, then follow the ribbons right back here."]);
+    }
+  } else if (nearSign) {
+    this.dialogue.open(nearSign.heading, nearSign.lines);
+  }
+};
+
+/* ---------- Game config ----------
+   FIT scaling against #game-container, centred both ways. fullscreenTarget
+   names the game shell, the element the Full button actually fullscreens,
+   so Phaser's own fullscreen resize handling measures the right box. */
+var config = {
+  type: Phaser.AUTO,
+  pixelArt: true,
+  parent: 'game-container',
+  width: 800,
+  height: 560,
+  backgroundColor: '#244734',
+  physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, fullscreenTarget: 'game-shell' },
+  scene: [BootScene, BayouScene]
+};
+window.addEventListener('load', function () {
+  window.__phaserGame = new Phaser.Game(config);
+});
+</script>
+</body>
+</html>
